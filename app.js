@@ -229,6 +229,9 @@ const RecipeApp = (() => {
   // ============================================
   let currentFilter = "all";
   let currentSort = "none";
+  let searchQuery = "";
+  let favorites = JSON.parse(localStorage.getItem("recipeFavorites")) || [];
+  let debounceTimer;
 
   // ============================================
   // PRIVATE: DOM REFERENCES
@@ -236,6 +239,9 @@ const RecipeApp = (() => {
   const recipeContainer = document.querySelector("#recipe-container");
   const filterButtons = document.querySelectorAll(".filter-btn");
   const sortButtons = document.querySelectorAll(".sort-btn");
+  const searchInput = document.querySelector("#search-input");
+  const clearSearchBtn = document.querySelector("#clear-search");
+  const recipeCountDisplay = document.querySelector("#recipe-count");
 
   // ============================================
   // PRIVATE: HELPER FUNCTIONS
@@ -268,12 +274,22 @@ const RecipeApp = (() => {
   };
 
   const createRecipeCard = (recipe) => {
+    const isFavorited = favorites.includes(recipe.id);
+    const heartIcon = isFavorited ? "❤️" : "🤍";
+
     const tagMarkup = recipe.tags
       .map((tag) => `<span class="recipe-tag">${tag}</span>`)
       .join("");
 
     return `
       <article class="recipe-card" data-id="${recipe.id}">
+        <!-- NEW: Favorite Button -->
+        <button class="favorite-btn ${isFavorited ? "favorited" : ""}" 
+                data-recipe-id="${recipe.id}"
+                aria-label="Favorite this recipe">
+            ${heartIcon}
+        </button>
+
         <div class="recipe-image" style="background-image: url('${recipe.image}');"></div>
         <div class="recipe-content">
           <h3>${recipe.title}</h3>
@@ -318,12 +334,37 @@ const RecipeApp = (() => {
   const filterByDifficulty = (recipes, difficulty) => recipes.filter(r => r.difficulty === difficulty);
   const filterByTime = (recipes, maxTime) => recipes.filter(r => r.time <= maxTime);
 
+  // NEW: Search filter
+  const filterBySearch = (recipes, query) => {
+    if (!query || query.trim() === "") {
+        return recipes;
+    }
+    
+    const lowerQuery = query.toLowerCase().trim();
+    
+    return recipes.filter(recipe => {
+        const titleMatch = recipe.title.toLowerCase().includes(lowerQuery);
+        const ingredientMatch = recipe.ingredients.some(ingredient => 
+            ingredient.toLowerCase().includes(lowerQuery)
+        );
+        const descriptionMatch = recipe.description.toLowerCase().includes(lowerQuery);
+        
+        return titleMatch || ingredientMatch || descriptionMatch;
+    });
+  };
+
+  // NEW: Favorites filter
+  const filterFavorites = (recipes) => {
+    return recipes.filter(recipe => favorites.includes(recipe.id));
+  };
+
   const applyFilter = (recipes, filterType) => {
     switch(filterType) {
       case "easy": return filterByDifficulty(recipes, "easy");
       case "medium": return filterByDifficulty(recipes, "medium");
       case "hard": return filterByDifficulty(recipes, "hard");
       case "quick": return filterByTime(recipes, 30);
+      case "favorites": return filterFavorites(recipes);
       default: return recipes;
     }
   };
@@ -339,12 +380,30 @@ const RecipeApp = (() => {
     }
   };
 
+  const updateRecipeCounter = (showing, total) => {
+    if (recipeCountDisplay) {
+        recipeCountDisplay.textContent = `Showing ${showing} of ${total} recipes`;
+    }
+  };
+
   const updateDisplay = () => {
-    let filtered = applyFilter(recipes, currentFilter);
-    let sorted = applySort(filtered, currentSort);
-    renderRecipes(sorted);
+    let recipesToDisplay = recipes;
+    
+    // Apply search FIRST
+    recipesToDisplay = filterBySearch(recipesToDisplay, searchQuery);
+    
+    // Then apply filters
+    recipesToDisplay = applyFilter(recipesToDisplay, currentFilter);
+    
+    // Then apply sorts
+    recipesToDisplay = applySort(recipesToDisplay, currentSort);
+    
+    // Update counter
+    updateRecipeCounter(recipesToDisplay.length, recipes.length);
+    
+    // Render
+    renderRecipes(recipesToDisplay);
     updateActiveButtons();
-    console.log(`Displaying ${sorted.length} recipes`);
   };
 
   const updateActiveButtons = () => {
@@ -353,8 +412,59 @@ const RecipeApp = (() => {
   };
 
   // ============================================
+  // PRIVATE: FAVORITES MANAGEMENT
+  // ============================================
+  const saveFavorites = () => {
+    localStorage.setItem("recipeFavorites", JSON.stringify(favorites));
+  };
+
+  const toggleFavorite = (recipeId) => {
+    const id = parseInt(recipeId);
+    
+    if (favorites.includes(id)) {
+        favorites = favorites.filter(favId => favId !== id);
+    } else {
+        favorites.push(id);
+    }
+    
+    saveFavorites();
+    updateDisplay();
+  };
+
+  // ============================================
   // PRIVATE: EVENT HANDLERS
   // ============================================
+  const handleSearchInput = (e) => {
+    const query = e.target.value;
+    
+    if (clearSearchBtn) {
+        clearSearchBtn.style.display = query ? "block" : "none";
+    }
+    
+    clearTimeout(debounceTimer);
+    debounceTimer = setTimeout(() => {
+        searchQuery = query;
+        updateDisplay();
+    }, 300);
+  };
+
+  const handleClearSearch = () => {
+    if (searchInput) {
+        searchInput.value = "";
+        searchQuery = "";
+        if (clearSearchBtn) clearSearchBtn.style.display = "none";
+        updateDisplay();
+    }
+  };
+
+  const handleFavoriteClick = (e) => {
+    const btn = e.target.closest(".favorite-btn");
+    if (!btn) return;
+    
+    const recipeId = btn.dataset.recipeId;
+    toggleFavorite(recipeId);
+  };
+
   const handleFilterClick = (e) => {
     currentFilter = e.target.dataset.filter;
     updateDisplay();
@@ -393,14 +503,28 @@ const RecipeApp = (() => {
     filterButtons.forEach(btn => btn.addEventListener("click", handleFilterClick));
     sortButtons.forEach(btn => btn.addEventListener("click", handleSortClick));
     recipeContainer.addEventListener("click", handleToggleClick);
+    
+    // NEW listeners
+    if (searchInput) {
+        searchInput.addEventListener("input", handleSearchInput);
+    }
+    
+    if (clearSearchBtn) {
+        clearSearchBtn.addEventListener("click", handleClearSearch);
+    }
+    
+    recipeContainer.addEventListener("click", handleFavoriteClick);
+
     console.log("Event listeners attached!");
   };
 
   const init = () => {
-    console.log("RecipeApp initializing...");
+    console.log("🍳 RecipeJS initializing...");
     setupEventListeners();
     updateDisplay();
-    console.log("RecipeApp ready!");
+    console.log("✅ RecipeJS ready!");
+    console.log(`📊 ${recipes.length} recipes loaded`);
+    console.log(`❤️  ${favorites.length} favorites saved`);
   };
 
   // ============================================
